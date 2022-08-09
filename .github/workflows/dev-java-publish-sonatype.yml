@@ -26,7 +26,7 @@ jobs:
           property: release_version
       - name: Build custom release version
         id: release_ver
-        run: echo ::set-output name=value::"${{ steps.ver.outputs.value }}-${{ steps.branch.outputs.branch_name }}-${{ github.run_id }}-SNAPSHOT"
+        run: echo ::set-output name=value::"${{ steps.ver.outputs.value }}-${{ steps.branch.outputs.branch_name }}-${{ github.run_id }}-${{ github.sha }}-SNAPSHOT"
       - name: Write custom release version to file
         uses: christian-draeger/write-properties@1.0.1
         with:
