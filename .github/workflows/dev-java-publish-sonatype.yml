@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 # Prepare custom build version
+      - name: Get short SHA
+        id: short_sha
+        run: echo "SHORT_SHA=`echo ${{ github.sha }} | cut -c1-8`" >> $SHORT_SHA
       - name: Get branch name
         id: branch
         run: echo ::set-output name=branch_name::${GITHUB_REF#refs/*/}
@@ -26,7 +29,7 @@ jobs:
           property: release_version
       - name: Build custom release version
         id: release_ver
-        run: echo ::set-output name=value::"${{ steps.ver.outputs.value }}-${{ steps.branch.outputs.branch_name }}-${{ github.run_id }}-${{ github.sha }}-SNAPSHOT"
+        run: echo ::set-output name=value::"${{ steps.ver.outputs.value }}-${{ steps.branch.outputs.branch_name }}-${{ github.run_id }}-${SHORT_SHA}-SNAPSHOT"
       - name: Write custom release version to file
         uses: christian-draeger/write-properties@1.0.1
         with:
