@@ -17,7 +17,7 @@ jobs:
 # Prepare custom build version
       - name: Get short SHA
         id: short_sha
-        run: echo "SHORT_SHA=`echo ${{ github.sha }} | cut -c1-8`" >> $SHORT_SHA
+        run: echo "SHORT_SHA=`echo ${{ github.sha }} | cut -c1-8`" >> $GITHUB_ENV
       - name: Get branch name
         id: branch
         run: echo ::set-output name=branch_name::${GITHUB_REF#refs/*/}
