@@ -26,13 +26,13 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class BlockingScheduledRetryableTaskQueue<V> {
 
+    private volatile long maxDataSize;
     private final int maxTaskCount;
-    private final long maxDataSize;
     private final RetryScheduler scheduler;
     private final Queue<ScheduledRetryableTask<V>> taskQueue;
     private final Set<ScheduledRetryableTask<V>> taskSet;
 
-    private volatile long capacityLeft;
+    private volatile long dataSize;
     private final Lock lock;
     private final Condition addition;
     private final Condition removal;
@@ -64,7 +64,6 @@ public class BlockingScheduledRetryableTaskQueue<V> {
         this.maxTaskCount = maxTaskCount;
         this.maxDataSize = maxDataSize;
         this.scheduler = (scheduler != null) ? scheduler : (unused) -> 0;
-        this.capacityLeft = maxDataSize;
 
         taskQueue = new PriorityQueue<>(ScheduledRetryableTask::compareOrder);
         taskSet = new HashSet<>();
@@ -88,8 +87,9 @@ public class BlockingScheduledRetryableTaskQueue<V> {
                 throw new IllegalStateException("Task has been already submitted");
 
             while (true) {
+                long capacityLeft = maxDataSize - dataSize;
                 if (capacityLeft >= task.getPayloadSize() && taskSet.size() < maxTaskCount) {
-                    capacityLeft -= task.getPayloadSize();
+                    dataSize += task.getPayloadSize();
                     addTask(task);
                     break;
                 } else {
@@ -141,7 +141,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
                 throw new IllegalStateException("Task to complete has not been submitted previously");
             taskSet.remove(task);
 
-            capacityLeft += task.getPayloadSize();
+            dataSize -= task.getPayloadSize();
             removal.signalAll();
         } finally {
             lock.unlock();
@@ -159,7 +159,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
      *     No order is guarantied if multiple tasks have same schedule time. Capacities reserved by this task are not
      *     released until this task is submitted to complete() method.
      *</P>
-     * @return  Task with earliest schedule time.
+     * @return  Task with the earliest schedule time.
      */
     public ScheduledRetryableTask<V> take() {
         lock.lock();
@@ -188,7 +188,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
      *     released until this task is submitted to complete() method.
      *</P>
      *
-     * @return  Task with earliest schedule time.
+     * @return  Task with the earliest schedule time.
      * @throws InterruptedException if method call was interrupted
      */
     public ScheduledRetryableTask<V> awaitScheduled() throws InterruptedException {
@@ -252,7 +252,25 @@ public class BlockingScheduledRetryableTaskQueue<V> {
      * @return Maximum cumulative data size for all tasks that can be submitted before blocking
      */
     public long getMaxDataSize() {
-        return maxDataSize;
+        lock.lock();
+        try {
+            return maxDataSize;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Sets cumulative data size for all tasks that can be submitted before blocking
+     * @param value  New data size to be set
+     */
+    public void setMaxDataSize(long value) {
+        lock.lock();
+        try {
+            this.maxDataSize = value;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -261,7 +279,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
     public long getUsedDataSize() {
         lock.lock();
         try {
-            return maxDataSize - capacityLeft;
+            return dataSize;
         } finally {
             lock.unlock();
         }
