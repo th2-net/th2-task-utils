@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Exactpro (Exactpro Systems Limited)
+ * Copyright 2020-2025 Exactpro (Exactpro Systems Limited)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import java.util.HashSet;
 import java.util.PriorityQueue;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -32,7 +33,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
     private final Queue<ScheduledRetryableTask<V>> taskQueue;
     private final Set<ScheduledRetryableTask<V>> taskSet;
 
-    private volatile long dataSize;
+    private final AtomicLong dataSize;
     private final Lock lock;
     private final Condition addition;
     private final Condition removal;
@@ -67,6 +68,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
 
         taskQueue = new PriorityQueue<>(ScheduledRetryableTask::compareOrder);
         taskSet = new HashSet<>();
+        dataSize = new AtomicLong(0);
         lock = new ReentrantLock();
         addition = lock.newCondition();
         removal = lock.newCondition();
@@ -87,9 +89,9 @@ public class BlockingScheduledRetryableTaskQueue<V> {
                 throw new IllegalStateException("Task has been already submitted");
 
             while (true) {
-                long capacityLeft = maxDataSize - dataSize;
+                long capacityLeft = maxDataSize - dataSize.get();
                 if (capacityLeft >= task.getPayloadSize() && taskSet.size() < maxTaskCount) {
-                    dataSize += task.getPayloadSize();
+                    dataSize.addAndGet(task.getPayloadSize());
                     addTask(task);
                     break;
                 } else {
@@ -141,7 +143,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
                 throw new IllegalStateException("Task to complete has not been submitted previously");
             taskSet.remove(task);
 
-            dataSize -= task.getPayloadSize();
+            dataSize.addAndGet(-task.getPayloadSize());
             removal.signalAll();
         } finally {
             lock.unlock();
@@ -165,7 +167,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
         lock.lock();
         try {
             while (true) {
-                if (taskQueue.size() > 0)
+                if (!taskQueue.isEmpty())
                     return taskQueue.poll();
                 else
                     addition.awaitUninterruptibly();
@@ -195,8 +197,8 @@ public class BlockingScheduledRetryableTaskQueue<V> {
         lock.lock();
         try {
             while (true) {
-                if (taskQueue.size() == 0)
-                    addition.awaitUninterruptibly();
+                if (taskQueue.isEmpty())
+                    addition.await();
                 else {
                     ScheduledRetryableTask<V> job = taskQueue.peek();
                     long now = System.nanoTime();
@@ -279,7 +281,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
     public long getUsedDataSize() {
         lock.lock();
         try {
-            return dataSize;
+            return dataSize.get();
         } finally {
             lock.unlock();
         }
