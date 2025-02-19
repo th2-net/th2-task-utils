@@ -20,20 +20,25 @@ import java.util.HashSet;
 import java.util.PriorityQueue;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class BlockingScheduledRetryableTaskQueue<V> {
 
-    private volatile long maxDataSize;
+    /**
+     * GuardedBy {@link #lock}
+     */
+    private long maxDataSize;
     private final int maxTaskCount;
     private final RetryScheduler scheduler;
     private final Queue<ScheduledRetryableTask<V>> taskQueue;
     private final Set<ScheduledRetryableTask<V>> taskSet;
 
-    private final AtomicLong dataSize;
+    /**
+     * GuardedBy {@link #lock}
+     */
+    private long dataSize;
     private final Lock lock;
     private final Condition addition;
     private final Condition removal;
@@ -68,7 +73,6 @@ public class BlockingScheduledRetryableTaskQueue<V> {
 
         taskQueue = new PriorityQueue<>(ScheduledRetryableTask::compareOrder);
         taskSet = new HashSet<>();
-        dataSize = new AtomicLong(0);
         lock = new ReentrantLock();
         addition = lock.newCondition();
         removal = lock.newCondition();
@@ -89,9 +93,9 @@ public class BlockingScheduledRetryableTaskQueue<V> {
                 throw new IllegalStateException("Task has been already submitted");
 
             while (true) {
-                long capacityLeft = maxDataSize - dataSize.get();
+                long capacityLeft = maxDataSize - dataSize;
                 if (capacityLeft >= task.getPayloadSize() && taskSet.size() < maxTaskCount) {
-                    dataSize.addAndGet(task.getPayloadSize());
+                    dataSize += task.getPayloadSize();
                     addTask(task);
                     break;
                 } else {
@@ -143,7 +147,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
                 throw new IllegalStateException("Task to complete has not been submitted previously");
             taskSet.remove(task);
 
-            dataSize.addAndGet(-task.getPayloadSize());
+            dataSize -= task.getPayloadSize();
             removal.signalAll();
         } finally {
             lock.unlock();
@@ -281,7 +285,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
     public long getUsedDataSize() {
         lock.lock();
         try {
-            return dataSize.get();
+            return dataSize;
         } finally {
             lock.unlock();
         }
