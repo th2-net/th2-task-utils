@@ -1,24 +1,17 @@
 plugins {
     id 'java-library'
-    id "com.exactpro.th2.gradle.publish" version "0.2.0"
+    id "com.exactpro.th2.gradle.publish" version "0.2.1"
 }
 
 group = 'com.exactpro.th2'
 version = release_version
 
-sourceCompatibility = JavaVersion.VERSION_1_8
-targetCompatibility = JavaVersion.VERSION_1_8
+th2JavaRelease {
+    targetJavaVersion.set(JavaVersion.VERSION_1_8)
+}
 
 repositories {
     mavenCentral()
-    maven {
-        name 'Sonatype_snapshots'
-        url 'https://s01.oss.sonatype.org/content/repositories/snapshots/'
-    }
-    maven {
-        name 'Sonatype_releases'
-        url 'https://s01.oss.sonatype.org/content/repositories/releases/'
-    }
     mavenLocal()
     configurations.configureEach {
         resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
