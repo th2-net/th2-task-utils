@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Exactpro (Exactpro Systems Limited)
+ * Copyright 2020-2025 Exactpro (Exactpro Systems Limited)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,13 +26,19 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class BlockingScheduledRetryableTaskQueue<V> {
 
-    private volatile long maxDataSize;
+    /**
+     * GuardedBy {@link #lock}
+     */
+    private long maxDataSize;
     private final int maxTaskCount;
     private final RetryScheduler scheduler;
     private final Queue<ScheduledRetryableTask<V>> taskQueue;
     private final Set<ScheduledRetryableTask<V>> taskSet;
 
-    private volatile long dataSize;
+    /**
+     * GuardedBy {@link #lock}
+     */
+    private long dataSize;
     private final Lock lock;
     private final Condition addition;
     private final Condition removal;
@@ -165,7 +171,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
         lock.lock();
         try {
             while (true) {
-                if (taskQueue.size() > 0)
+                if (!taskQueue.isEmpty())
                     return taskQueue.poll();
                 else
                     addition.awaitUninterruptibly();
@@ -195,8 +201,8 @@ public class BlockingScheduledRetryableTaskQueue<V> {
         lock.lock();
         try {
             while (true) {
-                if (taskQueue.size() == 0)
-                    addition.awaitUninterruptibly();
+                if (taskQueue.isEmpty())
+                    addition.await();
                 else {
                     ScheduledRetryableTask<V> job = taskQueue.peek();
                     long now = System.nanoTime();
