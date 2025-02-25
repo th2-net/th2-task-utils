@@ -16,3 +16,6 @@ jobs:
       sonatypeSigningPassword: ${{ secrets.SONATYPE_SIGNING_PASSWORD }}
       nvd-api-key: ${{ secrets.NVD_APIKEY }}
       cisa-url: ${{ secrets.CISA_URL }}
+      cisa-domain: ${{ secrets.CISA_DOMAIN }}
+      cisa-user: ${{ secrets.CISA_USER }}
+      cisa-password: ${{ secrets.CISA_PWD }}
