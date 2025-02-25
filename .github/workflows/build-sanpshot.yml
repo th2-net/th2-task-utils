@@ -11,7 +11,7 @@ on:
 
 jobs:
   build-job:
-    uses: th2-net/.github/.github/workflows/compound-java-dev.yml@main
+    uses: th2-net/.github/.github/workflows/compound-java-dev.yml@rm-86764 # FIXME: revert to main
     with:
       build-target: 'Sonatype'
     secrets:
@@ -20,3 +20,4 @@ jobs:
       sonatypeSigningKey: ${{ secrets.SONATYPE_GPG_ARMORED_KEY }}
       sonatypeSigningPassword: ${{ secrets.SONATYPE_SIGNING_PASSWORD }}
       nvd-api-key: ${{ secrets.NVD_APIKEY }}
+      cisa-url: test-url
