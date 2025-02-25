@@ -1,5 +1,6 @@
 plugins {
     id 'java-library'
+    id 'maven-publish'
     id "com.exactpro.th2.gradle.publish" version "0.2.2"
 }
 
