@@ -1,15 +1,11 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
-    id "com.exactpro.th2.gradle.publish" version "0.2.4"
+    alias(libs.plugins.th2.publish)
 }
 
 group = 'com.exactpro.th2'
 version = release_version
-
-th2JavaRelease {
-    targetJavaVersion.set(JavaVersion.VERSION_1_8)
-}
 
 repositories {
     mavenCentral()
@@ -21,10 +17,11 @@ repositories {
 }
 
 dependencies {
-    testImplementation 'org.assertj:assertj-core:3.27.3'
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.12.1'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.12.1'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.12.1'
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.assertj.core)
+    testImplementation 'org.junit.jupiter:junit-jupiter-api'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {
