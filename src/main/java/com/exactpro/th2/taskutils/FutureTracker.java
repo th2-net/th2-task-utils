@@ -32,29 +32,55 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  */
 public class FutureTracker<T> {
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
-    private final Condition onChange = lock.writeLock().newCondition();
+    private final Condition onRemove = lock.writeLock().newCondition();
     /** Guarded by {@link #lock} */
     private final Set<CompletableFuture<T>> futures;
     private volatile boolean enabled;
+    private final int limit;
+    private final boolean hasLimit;
 
-    public FutureTracker() {
+    private FutureTracker(int limit) {
         this.futures = new HashSet<>();
         this.enabled = true;
+        this.limit = limit;
+        this.hasLimit = limit > 0;
+    }
+
+    /**
+     * Creates unlimited FutureTracker
+     * @param <T> is trackable {@link CompletableFuture} type
+     * @return instance of FutureTracker class
+     */
+    public static <T> FutureTracker<T> create() {
+        return new FutureTracker<>(0);
+    }
+
+    /**
+     * Creates FutureTracker with limit size
+     * @param <T> is trackable {@link CompletableFuture} type
+     * @param limit is max number of trackable futures if positive value, otherwise tracker unlimited
+     * @return instance of FutureTracker class
+     */
+    public static <T> FutureTracker<T> create(int limit) {
+        return new FutureTracker<>(limit);
     }
 
     /**
      * Track a future
      * @param future to be tracked
+     * @return true if future isn't done and is added for tracking otherwise false
      */
-    public void track(CompletableFuture<T> future) {
+    public boolean track(CompletableFuture<T> future) {
         if (enabled) {
             if (future.isDone()) {
-                return;
+                return false;
             }
             lock.writeLock().lock();
             try {
+                if (hasLimit && futures.size() == limit) {
+                    return false;
+                }
                 futures.add(future);
-                onChange.signalAll();
             } finally {
                 lock.writeLock().unlock();
             }
@@ -62,12 +88,73 @@ public class FutureTracker<T> {
                 lock.writeLock().lock();
                 try {
                     futures.remove(future);
-                    onChange.signalAll();
+                    onRemove.signalAll();
                 } finally {
                     lock.writeLock().unlock();
                 }
             });
+            return true;
         }
+        return false;
+    }
+
+    /**
+     * Try to add the future for tracking during timeoutMillis
+     * @param future to be tracked
+     * @param timeoutMillis the maximum time in milliseconds to wait for free space for adding
+     * @return true if future isn't done and is added for tracking during timeout otherwise false
+     * @throws InterruptedException - if any thread has interrupted the current thread.
+     */
+    public boolean track(CompletableFuture<T> future, long timeoutMillis) throws InterruptedException {
+        if (enabled) {
+            if (future.isDone()) {
+                return false;
+            }
+            long endNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
+
+            do {
+                lock.writeLock().lock();
+                try {
+                    if (future.isDone()) {
+                        return false;
+                    }
+                    if (!hasLimit || futures.size() < limit) {
+                        futures.add(future);
+                        break;
+                    }
+
+                    long remainingTime = endNanos - System.nanoTime();
+                    if (remainingTime <= 0) {
+                        return false;
+                    }
+
+                    if (!onRemove.await(remainingTime, TimeUnit.NANOSECONDS)) {
+                        return false;
+                    }
+                    if (future.isDone()) {
+                        return false;
+                    }
+                    if (futures.size() < limit) {
+                        futures.add(future);
+                        break;
+                    }
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            } while (System.nanoTime() < endNanos);
+
+            future.whenComplete((res, ex) -> {
+                lock.writeLock().lock();
+                try {
+                    futures.remove(future);
+                    onRemove.signalAll();
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            });
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -124,52 +211,32 @@ public class FutureTracker<T> {
     }
 
     /**
-     * Waits until number of tracking task is less or equal maxSize or timeout has elapsed
-     * @param maxSize - targe number of tracking task
-     * @param timeoutMillis - the maximum time to wait, in milliseconds
-     * @return - true if number of tracking task is less or equal maxSize during timeout,
-     * @throws InterruptedException - if any thread has interrupted the current thread.
-     * @throws IllegalArgumentException - if maxSize is negative
-     */
-    public boolean awaitUntilSizeNotMore(int maxSize, long timeoutMillis) throws InterruptedException {
-        if (maxSize < 0) {
-            throw new IllegalArgumentException("'maxSize' can't be negative");
-        }
-        long endNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
-        do {
-            lock.writeLock().lock();
-            try {
-                if (futures.size() <= maxSize) {
-                    return true;
-                }
-                long remainingTime = endNanos - System.nanoTime();
-                if (remainingTime <= 0) {
-                    return false;
-                }
-                if (!onChange.await(remainingTime, TimeUnit.NANOSECONDS)) {
-                    return false;
-                }
-                if (futures.size() <= maxSize) {
-                    return true;
-                }
-            } finally {
-                lock.writeLock().unlock();
-            }
-        } while (System.nanoTime() < endNanos);
-        return false;
-    }
-
-    /**
      * Informational method for getting remaining number of futures
      * @return number of unfinished futures
      */
-    public int remaining () {
+    public int remaining() {
         lock.readLock().lock();
         try {
             return futures.size();
         } finally {
             lock.readLock().unlock();
         }
+    }
+
+    /**
+     * Limit of trackable features if positive value, otherwise tracker unlimited
+     * @return max number of trackable futures if positive value, otherwise tracker unlimited
+     */
+    public int limit() {
+        return limit;
+    }
+
+    /**
+     * Has tracker got limit for number of trackable futures
+     * @return true if {@link #limit()} is positive, otherwise false
+     */
+    public boolean hasLimit() {
+        return hasLimit;
     }
 
     /**

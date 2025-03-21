@@ -1,4 +1,4 @@
-# th2-tasks-utils
+# th2-tasks-utils (0.1.4)
 
 This library includes classes for managing tasks.
 
@@ -18,4 +18,10 @@ Task extraction does not free up resources in queue. They are reserved for futur
 
 ### 0.1.4
 
-* Implemented `FutureTracker.awaitUntilSizeNotMore` method.
+* The release includes BROKEN changes related to `FutureTracker` class:
+  * Public constructors have been replaced to `create` factory methods.
+  * The `boolean track(CompletableFuture<T> future)` method can return `false` and doesn't track feature when limit is positive. 
+
+* Provided ability to limit capacity of `FutureTracker` class
+* Added `FutureTracker.create()` and `FutureTracker.create(int limit)` factory methods
+* Added `boolean track(CompletableFuture<T> future, long timeoutMillis)  throws InterruptedException` overload method in `FutureTracker` class.
