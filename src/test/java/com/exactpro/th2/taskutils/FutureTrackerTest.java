@@ -163,14 +163,14 @@ public class FutureTrackerTest {
         StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
         futureTracker.track(getFutureWithDelay(waitingRunnable));
 
-        assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.awaitUntilSize(2, 0)).isTrue());
-        assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.awaitUntilSize(1, 0)).isTrue());
-        assertGreaterDuration(DELAY_MILLIS, () -> assertThat(futureTracker.awaitUntilSize(0, DELAY_MILLIS)).isFalse());
+        assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.awaitUntilSizeNotMore(2, 0)).isTrue());
+        assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.awaitUntilSizeNotMore(1, 0)).isTrue());
+        assertGreaterDuration(DELAY_MILLIS, () -> assertThat(futureTracker.awaitUntilSizeNotMore(0, DELAY_MILLIS)).isFalse());
 
         assertGreaterDuration(DELAY_MILLIS, () -> {
             waitingRunnable.awaitReadiness();
             waitingRunnable.start();
-            assertThat(futureTracker.awaitUntilSize(0, DELAY_MILLIS * 2)).isTrue();
+            assertThat(futureTracker.awaitUntilSizeNotMore(0, DELAY_MILLIS * 2)).isTrue();
         });
     }
 }

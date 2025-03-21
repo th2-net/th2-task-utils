@@ -124,22 +124,22 @@ public class FutureTracker<T> {
     }
 
     /**
-     * Waits until number of tracking task is less or equal size or timeout has elapsed
-     * @param size - targe number of tracking task
+     * Waits until number of tracking task is less or equal maxSize or timeout has elapsed
+     * @param maxSize - targe number of tracking task
      * @param timeoutMillis - the maximum time to wait, in milliseconds
-     * @return - true if number of tracking task is less or equal size during timeout,
+     * @return - true if number of tracking task is less or equal maxSize during timeout,
      * @throws InterruptedException - if any thread has interrupted the current thread.
-     * @throws IllegalArgumentException - if size is negative
+     * @throws IllegalArgumentException - if maxSize is negative
      */
-    public boolean awaitUntilSize(int size, long timeoutMillis) throws InterruptedException {
-        if (size < 0) {
-            throw new IllegalArgumentException("'size' can't be negative");
+    public boolean awaitUntilSizeNotMore(int maxSize, long timeoutMillis) throws InterruptedException {
+        if (maxSize < 0) {
+            throw new IllegalArgumentException("'maxSize' can't be negative");
         }
         long endNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
         do {
             lock.writeLock().lock();
             try {
-                if (futures.size() <= size) {
+                if (futures.size() <= maxSize) {
                     return true;
                 }
                 long remainingTime = endNanos - System.nanoTime();
@@ -149,7 +149,7 @@ public class FutureTracker<T> {
                 if (!onChange.await(remainingTime, TimeUnit.NANOSECONDS)) {
                     return false;
                 }
-                if (futures.size() <= size) {
+                if (futures.size() <= maxSize) {
                     return true;
                 }
             } finally {

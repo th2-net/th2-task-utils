@@ -18,4 +18,4 @@ Task extraction does not free up resources in queue. They are reserved for futur
 
 ### 0.1.4
 
-* Implemented `FutureTracker.awaitUntilSize` method.
+* Implemented `FutureTracker.awaitUntilSizeNotMore` method.
