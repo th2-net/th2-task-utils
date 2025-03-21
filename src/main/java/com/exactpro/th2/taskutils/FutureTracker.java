@@ -146,12 +146,11 @@ public class FutureTracker<T> {
                 if (remainingTime <= 0) {
                     return false;
                 }
-                if (onChange.await(remainingTime, TimeUnit.NANOSECONDS)) {
-                    if (futures.size() <= size) {
-                        return true;
-                    }
-                } else {
+                if (!onChange.await(remainingTime, TimeUnit.NANOSECONDS)) {
                     return false;
+                }
+                if (futures.size() <= size) {
+                    return true;
                 }
             } finally {
                 lock.writeLock().unlock();
