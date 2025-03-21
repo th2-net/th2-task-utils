@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Exactpro (Exactpro Systems Limited)
+ * Copyright 2020-2025 Exactpro (Exactpro Systems Limited)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,17 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * Following class tracks futures and when needed tries to wait for them
  */
 public class FutureTracker<T> {
+    private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    private final Condition onChange = lock.writeLock().newCondition();
+    /** Guarded by {@link #lock} */
     private final Set<CompletableFuture<T>> futures;
     private volatile boolean enabled;
 
@@ -45,12 +51,20 @@ public class FutureTracker<T> {
             if (future.isDone()) {
                 return;
             }
-            synchronized (futures) {
+            lock.writeLock().lock();
+            try {
                 futures.add(future);
+                onChange.signalAll();
+            } finally {
+                lock.writeLock().unlock();
             }
             future.whenComplete((res, ex) -> {
-                synchronized (futures) {
+                lock.writeLock().lock();
+                try {
                     futures.remove(future);
+                    onChange.signalAll();
+                } finally {
+                    lock.writeLock().unlock();
                 }
             });
         }
@@ -65,7 +79,7 @@ public class FutureTracker<T> {
     }
 
     /**
-     * Waits for tracked futures, cancels futures after timeout.
+     * Disables traker and waits for tracked futures, cancels futures after timeout.
      * Cancels all futures without wait if passed 0.
      * Waits without timeout if passed negative.
      * @param timeoutMillis milliseconds to wait
@@ -76,10 +90,14 @@ public class FutureTracker<T> {
         this.enabled = false;
 
         List<CompletableFuture<T>> remainingFutures;
-        synchronized (futures) {
-            if (futures.isEmpty())
+        lock.readLock().lock();
+        try {
+            if (futures.isEmpty()) {
                 return;
+            }
             remainingFutures = new ArrayList<>(futures);
+        } finally {
+            lock.readLock().unlock();
         }
 
         for (CompletableFuture<T> future : remainingFutures) {
@@ -98,6 +116,7 @@ public class FutureTracker<T> {
                     }
                 }
             } catch (ExecutionException | TimeoutException e) {
+                // do nothing
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -105,12 +124,52 @@ public class FutureTracker<T> {
     }
 
     /**
+     * Waits until number of tracking task is less or equal size or timeout has elapsed
+     * @param size - targe number of tracking task
+     * @param timeoutMillis - the maximum time to wait, in milliseconds
+     * @return - true if number of tracking task is less or equal size during timeout,
+     * @throws InterruptedException - if any thread has interrupted the current thread.
+     * @throws IllegalArgumentException - if size is negative
+     */
+    public boolean awaitUntilSize(int size, long timeoutMillis) throws InterruptedException {
+        if (size < 0) {
+            throw new IllegalArgumentException("'size' can't be negative");
+        }
+        long endNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
+        do {
+            lock.writeLock().lock();
+            try {
+                if (futures.size() <= size) {
+                    return true;
+                }
+                long remainingTime = endNanos - System.nanoTime();
+                if (remainingTime <= 0) {
+                    return false;
+                }
+                if (onChange.await(remainingTime, TimeUnit.NANOSECONDS)) {
+                    if (futures.size() <= size) {
+                        return true;
+                    }
+                } else {
+                    return false;
+                }
+            } finally {
+                lock.writeLock().unlock();
+            }
+        } while (System.nanoTime() < endNanos);
+        return false;
+    }
+
+    /**
      * Informational method for getting remaining number of futures
      * @return number of unfinished futures
      */
     public int remaining () {
-        synchronized (futures) {
+        lock.readLock().lock();
+        try {
             return futures.size();
+        } finally {
+            lock.readLock().unlock();
         }
     }
 
