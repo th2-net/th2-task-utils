@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Exactpro (Exactpro Systems Limited)
+ * Copyright 2020-2025 Exactpro (Exactpro Systems Limited)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,37 +23,138 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * Following class tracks futures and when needed tries to wait for them
  */
 public class FutureTracker<T> {
+    private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    private final Condition onRemove = lock.writeLock().newCondition();
+    /** Guarded by {@link #lock} */
     private final Set<CompletableFuture<T>> futures;
     private volatile boolean enabled;
+    private final int limit;
+    private final boolean hasLimit;
 
-    public FutureTracker() {
+    private FutureTracker(int limit) {
         this.futures = new HashSet<>();
         this.enabled = true;
+        this.limit = limit;
+        this.hasLimit = limit > 0;
+    }
+
+    /**
+     * Creates unlimited FutureTracker
+     * @param <T> is trackable {@link CompletableFuture} type
+     * @return instance of FutureTracker class
+     */
+    public static <T> FutureTracker<T> create() {
+        return new FutureTracker<>(0);
+    }
+
+    /**
+     * Creates FutureTracker with limit size
+     * @param <T> is trackable {@link CompletableFuture} type
+     * @param limit is max number of trackable futures if positive value, otherwise tracker unlimited
+     * @return instance of FutureTracker class
+     */
+    public static <T> FutureTracker<T> create(int limit) {
+        return new FutureTracker<>(limit);
     }
 
     /**
      * Track a future
      * @param future to be tracked
+     * @return true if future isn't done and is added for tracking otherwise false
      */
-    public void track(CompletableFuture<T> future) {
+    public boolean track(CompletableFuture<T> future) {
         if (enabled) {
             if (future.isDone()) {
-                return;
+                return false;
             }
-            synchronized (futures) {
+            lock.writeLock().lock();
+            try {
+                if (hasLimit && futures.size() == limit) {
+                    return false;
+                }
                 futures.add(future);
+            } finally {
+                lock.writeLock().unlock();
             }
             future.whenComplete((res, ex) -> {
-                synchronized (futures) {
+                lock.writeLock().lock();
+                try {
                     futures.remove(future);
+                    onRemove.signalAll();
+                } finally {
+                    lock.writeLock().unlock();
                 }
             });
+            return true;
         }
+        return false;
+    }
+
+    /**
+     * Try to add the future for tracking during timeoutMillis
+     * @param future to be tracked
+     * @param timeoutMillis the maximum time in milliseconds to wait for free space for adding
+     * @return true if future isn't done and is added for tracking during timeout otherwise false
+     * @throws InterruptedException - if any thread has interrupted the current thread.
+     */
+    public boolean track(CompletableFuture<T> future, long timeoutMillis) throws InterruptedException {
+        if (enabled) {
+            if (future.isDone()) {
+                return false;
+            }
+            long endNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
+
+            do {
+                lock.writeLock().lock();
+                try {
+                    if (future.isDone()) {
+                        return false;
+                    }
+                    if (!hasLimit || futures.size() < limit) {
+                        futures.add(future);
+                        break;
+                    }
+
+                    long remainingTime = endNanos - System.nanoTime();
+                    if (remainingTime <= 0) {
+                        return false;
+                    }
+
+                    if (!onRemove.await(remainingTime, TimeUnit.NANOSECONDS)) {
+                        return false;
+                    }
+                    if (future.isDone()) {
+                        return false;
+                    }
+                    if (futures.size() < limit) {
+                        futures.add(future);
+                        break;
+                    }
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            } while (System.nanoTime() < endNanos);
+
+            future.whenComplete((res, ex) -> {
+                lock.writeLock().lock();
+                try {
+                    futures.remove(future);
+                    onRemove.signalAll();
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            });
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -65,7 +166,7 @@ public class FutureTracker<T> {
     }
 
     /**
-     * Waits for tracked futures, cancels futures after timeout.
+     * Disables traker and waits for tracked futures, cancels futures after timeout.
      * Cancels all futures without wait if passed 0.
      * Waits without timeout if passed negative.
      * @param timeoutMillis milliseconds to wait
@@ -76,10 +177,14 @@ public class FutureTracker<T> {
         this.enabled = false;
 
         List<CompletableFuture<T>> remainingFutures;
-        synchronized (futures) {
-            if (futures.isEmpty())
+        lock.readLock().lock();
+        try {
+            if (futures.isEmpty()) {
                 return;
+            }
             remainingFutures = new ArrayList<>(futures);
+        } finally {
+            lock.readLock().unlock();
         }
 
         for (CompletableFuture<T> future : remainingFutures) {
@@ -98,6 +203,7 @@ public class FutureTracker<T> {
                     }
                 }
             } catch (ExecutionException | TimeoutException e) {
+                // do nothing
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -108,10 +214,29 @@ public class FutureTracker<T> {
      * Informational method for getting remaining number of futures
      * @return number of unfinished futures
      */
-    public int remaining () {
-        synchronized (futures) {
+    public int remaining() {
+        lock.readLock().lock();
+        try {
             return futures.size();
+        } finally {
+            lock.readLock().unlock();
         }
+    }
+
+    /**
+     * Limit of trackable features if positive value, otherwise tracker unlimited
+     * @return max number of trackable futures if positive value, otherwise tracker unlimited
+     */
+    public int limit() {
+        return limit;
+    }
+
+    /**
+     * Has tracker got limit for number of trackable futures
+     * @return true if {@link #limit()} is positive, otherwise false
+     */
+    public boolean hasLimit() {
+        return hasLimit;
     }
 
     /**

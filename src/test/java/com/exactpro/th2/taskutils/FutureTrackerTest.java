@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Exactpro (Exactpro Systems Limited)
+ * Copyright 2020-2025 Exactpro (Exactpro Systems Limited)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,44 +16,63 @@
 
 package com.exactpro.th2.taskutils;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 
 public class FutureTrackerTest {
+    private final int LIMIT = 3;
     private final long NO_DELAY_MILLIS = 75;
     private final long DELAY_MILLIS = 100;
 
-    private class SleepingRunnable implements Runnable {
+    private final List<StartableRunnable> startableRunnables = new ArrayList<>();
+
+    @FunctionalInterface
+    private interface Task {
+        void invoke() throws InterruptedException;
+    }
+
+    private static class SleepingRunnable implements Runnable {
         final long sleepTimeMillis;
+
         public SleepingRunnable(long sleepTimeMillis) {
             this.sleepTimeMillis = sleepTimeMillis;
         }
+
         @Override
         public void run() {
             try {
                 Thread.sleep(sleepTimeMillis);
             } catch (InterruptedException e) {
-
+                // do nothing
             }
         }
     }
-    private CompletableFuture<Integer> getFutureWithException () {
+
+    private CompletableFuture<Integer> getFutureWithException() {
         return CompletableFuture.supplyAsync(() -> {
             throw new RuntimeException();
         });
     }
 
-    private CompletableFuture<Integer> getFutureWithDelay (StartableRunnable waitingRunnable) {
+    private CompletableFuture<Integer> getFutureWithDelay(StartableRunnable waitingRunnable) {
+        startableRunnables.add(waitingRunnable);
         return CompletableFuture.supplyAsync(() -> {
             waitingRunnable.run();
             return 0;
         });
     }
 
-    private CompletableFuture<Integer> chainFuture (CompletableFuture<Integer> future) {
+    private CompletableFuture<Integer> chainFuture(CompletableFuture<Integer> future) {
         return future.thenApply((res) -> {
             try {
                 Thread.sleep(DELAY_MILLIS);
@@ -65,102 +84,152 @@ public class FutureTrackerTest {
         });
     }
 
-    @Test
-    public void testEmptyTracker () {
-        long expectedTrackingMillis = NO_DELAY_MILLIS;
-
-        FutureTracker<Integer> futureTracker = new FutureTracker<>();
+    @SuppressWarnings("SameParameterValue")
+    private void assertLessDuration(long timeoutMillis, Task task) throws InterruptedException {
         long start = System.nanoTime();
-        futureTracker.awaitRemaining();
-
-        Assertions.assertThat(futureTracker.isEmpty()).isTrue();
-
-        long actualTrackingMillis = (System.nanoTime() - start)/1_000_000;
-        Assertions.assertThat(actualTrackingMillis).isLessThan(expectedTrackingMillis);
-    }
-
-    @Test
-    public void testTrackingSingleFuture () {
-        long expectedTrackingMillis = DELAY_MILLIS;
-
-        FutureTracker<Integer> futureTracker = new FutureTracker<>();
-
-        StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
-
-        futureTracker.track(getFutureWithDelay(waitingRunnable));
-        Assertions.assertThat(futureTracker.isEmpty()).isFalse();
-
-        waitingRunnable.awaitReadiness();
-        waitingRunnable.start();
-
-        long start = System.nanoTime();
-        futureTracker.awaitRemaining();
-
-        long actualTrackingMillis = (System.nanoTime() - start)/1_000_000;
-        Assertions.assertThat(actualTrackingMillis).isGreaterThanOrEqualTo(expectedTrackingMillis);
-    }
-
-    @Test
-    public void testTrackingFutureWithException () {
-        long expectedTrackingMillis = NO_DELAY_MILLIS;
-
-        FutureTracker<Integer> futureTracker = new FutureTracker<>();
-
-        long start = System.nanoTime();
-        futureTracker.track(getFutureWithException());
-        futureTracker.awaitRemaining();
-
-        long actualTrackingMillis = (System.nanoTime() - start)/1_000_000;
-        Assertions.assertThat(actualTrackingMillis).isLessThan(expectedTrackingMillis);
-    }
-
-    @Test
-    public void testTracking5Futures() {
-        long expectedTrackingTime = 5 * DELAY_MILLIS;
-
-        StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
-
-        FutureTracker<Integer> futureTracker = new FutureTracker<>();
-
-        CompletableFuture<Integer> lastFuture = null;
-        for (int i = 0; i < 5; i ++) {
-            CompletableFuture<Integer> curFuture = getFutureWithDelay(waitingRunnable);
-            if (i != 0) {
-                curFuture = chainFuture(lastFuture);
-            }
-            futureTracker.track(curFuture);
-            lastFuture = curFuture;
-        }
-        Assertions.assertThat(futureTracker.isEmpty()).isFalse();
-        Assertions.assertThat(futureTracker.remaining()).isEqualTo(5);
-
-        waitingRunnable.awaitReadiness();
-        waitingRunnable.start();
-
-        long start = System.nanoTime();
-        futureTracker.awaitRemaining();
-
-        long actualTrackingMillis = (System.nanoTime() - start)/1_000_000;
-        Assertions.assertThat(actualTrackingMillis).isGreaterThanOrEqualTo(expectedTrackingTime);
-    }
-
-    @Test
-    public void testAwaitZeroTimeout() {
-        long expectedTrackingMillis = NO_DELAY_MILLIS;
-
-        StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
-
-        FutureTracker<Integer> futureTracker = new FutureTracker<>();
-        futureTracker.track(getFutureWithDelay(waitingRunnable));
-
-        waitingRunnable.awaitReadiness();
-        waitingRunnable.start();
-
-        long start = System.nanoTime();
-        futureTracker.awaitRemaining(0);
-
-
+        task.invoke();
         long actualTrackingMillis = (System.nanoTime() - start) / 1_000_000;
-        Assertions.assertThat(actualTrackingMillis).isLessThan(expectedTrackingMillis);
+        assertThat(actualTrackingMillis).isLessThan(timeoutMillis);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    private void assertGreaterDuration(long timeoutMillis, Task task) throws InterruptedException {
+        long start = System.nanoTime();
+        task.invoke();
+        long actualTrackingMillis = (System.nanoTime() - start) / 1_000_000;
+        assertThat(actualTrackingMillis).isGreaterThanOrEqualTo(timeoutMillis);
+    }
+
+    @AfterEach
+    public void afterEach() {
+        for (StartableRunnable startableRunnable : startableRunnables) {
+            if (!startableRunnable.isReady()) {
+                startableRunnable.awaitReadiness();
+            }
+            if (!startableRunnable.isStarted()) {
+                startableRunnable.start();
+            }
+        }
+        startableRunnables.clear();
+    }
+
+    @Nested
+    class Both {
+        @ParameterizedTest
+        @ValueSource(ints = {0, LIMIT})
+        public void testEmptyTracker(int limit) throws InterruptedException {
+            FutureTracker<Integer> futureTracker = FutureTracker.create(limit);
+            assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.isEmpty()).isTrue());
+        }
+
+        @ParameterizedTest
+        @ValueSource(ints = {0, LIMIT})
+        public void testTrackingSingleFuture(int limit) throws InterruptedException {
+            FutureTracker<Integer> futureTracker = FutureTracker.create(limit);
+            StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
+            assertThat(futureTracker.track(getFutureWithDelay(waitingRunnable))).isTrue();
+
+            assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.isEmpty()).isFalse());
+            assertGreaterDuration(DELAY_MILLIS, () -> {
+                waitingRunnable.awaitReadiness();
+                waitingRunnable.start();
+                futureTracker.awaitRemaining();
+            });
+        }
+
+        @ParameterizedTest
+        @ValueSource(ints = {0, LIMIT})
+        public void testTrackingFutureWithException(int limit) throws InterruptedException {
+            FutureTracker<Integer> futureTracker = FutureTracker.create(limit);
+            assertThat(futureTracker.track(getFutureWithException())).isTrue();
+            assertLessDuration(NO_DELAY_MILLIS, futureTracker::awaitRemaining);
+        }
+
+        @ParameterizedTest
+        @ValueSource(ints = {0, LIMIT})
+        public void testTrackingLimitFutures(int limit) throws InterruptedException {
+            FutureTracker<Integer> futureTracker = FutureTracker.create(limit);
+            StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
+
+            CompletableFuture<Integer> lastFuture = null;
+            for (int i = 0; i < LIMIT; i++) {
+                CompletableFuture<Integer> curFuture = getFutureWithDelay(waitingRunnable);
+                if (i != 0) {
+                    curFuture = chainFuture(lastFuture);
+                }
+                assertThat(futureTracker.track(curFuture)).isTrue();
+                lastFuture = curFuture;
+            }
+            assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.isEmpty()).isFalse());
+            assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.remaining()).isEqualTo(LIMIT));
+            assertGreaterDuration(LIMIT * DELAY_MILLIS, () -> {
+                waitingRunnable.awaitReadiness();
+                waitingRunnable.start();
+                futureTracker.awaitRemaining();
+            });
+        }
+
+        @ParameterizedTest
+        @ValueSource(ints = {0, LIMIT})
+        public void testAwaitZeroTimeout(int limit) throws InterruptedException {
+            FutureTracker<Integer> futureTracker = FutureTracker.create(limit);
+            StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
+
+            assertThat(futureTracker.track(getFutureWithDelay(waitingRunnable))).isTrue();
+
+            assertLessDuration(NO_DELAY_MILLIS, () -> {
+                waitingRunnable.awaitReadiness();
+                waitingRunnable.start();
+                futureTracker.awaitRemaining(0);
+            });
+        }
+    }
+
+    @Nested
+    class Unlimited {
+        private final FutureTracker<Integer> futureTracker = FutureTracker.create();
+
+        @Test
+        public void testLimit() {
+            assertThat(futureTracker.limit()).isLessThanOrEqualTo(0);
+            assertThat(futureTracker.hasLimit()).isFalse();
+        }
+    }
+
+    @Nested
+    class Limited {
+        private final FutureTracker<Integer> futureTracker = FutureTracker.create(LIMIT);
+
+        @Test
+        public void testLimit() {
+            assertThat(futureTracker.limit()).isGreaterThan(0);
+            assertThat(futureTracker.hasLimit()).isTrue();
+        }
+
+        @Test
+        public void testExtraFuture() throws InterruptedException {
+            List<StartableRunnable> startables = new ArrayList<>();
+
+            for (int i = 0; i < LIMIT; i++) {
+                assertLessDuration(NO_DELAY_MILLIS, () -> {
+                    StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
+                    CompletableFuture<Integer> future = getFutureWithDelay(waitingRunnable);
+                    assertThat(futureTracker.track(future)).isTrue();
+                    startables.add(waitingRunnable);
+                });
+            }
+
+            StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
+            CompletableFuture<Integer> extraFuture = getFutureWithDelay(waitingRunnable);
+            assertLessDuration(NO_DELAY_MILLIS, () -> assertThat(futureTracker.track(extraFuture)).isFalse());
+            assertGreaterDuration(DELAY_MILLIS, () -> assertThat(futureTracker.track(extraFuture, DELAY_MILLIS)).isFalse());
+
+            assertGreaterDuration(DELAY_MILLIS, () -> {
+                startables.forEach(StartableRunnable::awaitReadiness);
+                startables.forEach(StartableRunnable::start);
+
+                assertThat(futureTracker.track(extraFuture, DELAY_MILLIS * 2)).isTrue();
+            });
+        }
     }
 }
