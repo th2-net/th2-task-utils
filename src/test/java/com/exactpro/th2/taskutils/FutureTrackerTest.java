@@ -365,7 +365,6 @@ public class FutureTrackerTest {
                     StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
                     CompletableFuture<Integer> future = getFutureWithDelay(waitingRunnable);
                     assertThat(futureTracker.track(future)).isTrue();
-                    waitingRunnable.awaitReadiness();
                     startables.add(waitingRunnable);
                 });
             }
@@ -384,6 +383,7 @@ public class FutureTrackerTest {
             taskRunnable.awaitReadiness();
             taskRunnable.start();
 
+            startables.forEach(StartableRunnable::awaitReadiness);
             startables.forEach(StartableRunnable::start);
             assertGreaterDuration(DELAY_MILLIS, () -> futureTracker.awaitRemaining(DELAY_DURATION));
 
