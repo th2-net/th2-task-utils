@@ -43,6 +43,7 @@ public class FutureTrackerTest {
     private final Duration DELAY_DURATION = Duration.ofMillis(DELAY_MILLIS);
 
     private final List<StartableRunnable> runnableList = new ArrayList<>();
+    private final List<CompletableFuture<?>> futuresList = new ArrayList<>();
 
     @FunctionalInterface
     private interface Task {
@@ -67,21 +68,25 @@ public class FutureTrackerTest {
     }
 
     private CompletableFuture<Integer> getFutureWithException() {
-        return CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<Integer> future = CompletableFuture.supplyAsync(() -> {
             throw new RuntimeException();
         });
+        futuresList.add(future);
+        return future;
     }
 
     private CompletableFuture<Integer> getFutureWithDelay(StartableRunnable waitingRunnable) {
         runnableList.add(waitingRunnable);
-        return CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<Integer> future = CompletableFuture.supplyAsync(() -> {
             waitingRunnable.run();
             return 0;
         });
+        futuresList.add(future);
+        return future;
     }
 
     private CompletableFuture<Integer> chainFuture(CompletableFuture<Integer> future) {
-        return future.thenApply((res) -> {
+        CompletableFuture<Integer> nextFuture = future.thenApply((res) -> {
             try {
                 Thread.sleep(DELAY_MILLIS);
             } catch (InterruptedException e) {
@@ -90,6 +95,8 @@ public class FutureTrackerTest {
 
             return res;
         });
+        futuresList.add(nextFuture);
+        return nextFuture;
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -109,7 +116,8 @@ public class FutureTrackerTest {
     }
 
     @AfterEach
-    public void afterEach() {
+    @Timeout(value = 5, unit = SECONDS)
+    public void afterEach() throws InterruptedException {
         for (StartableRunnable startableRunnable : runnableList) {
             if (!startableRunnable.isReady()) {
                 startableRunnable.awaitReadiness();
@@ -119,6 +127,16 @@ public class FutureTrackerTest {
             }
         }
         runnableList.clear();
+        for (CompletableFuture<?> future : futuresList) {
+            try {
+                future.cancel(true);
+                future.get();
+            } catch (InterruptedException e) {
+                throw e;
+            } catch (Exception e) {
+                // do nothing
+            }
+        }
     }
 
     @Nested
@@ -314,13 +332,17 @@ public class FutureTrackerTest {
 
             StartableRunnable waitingRunnable = StartableRunnable.of(new SleepingRunnable(DELAY_MILLIS));
             CompletableFuture<Integer> extraFuture = getFutureWithDelay(waitingRunnable);
-            CompletableFuture<Void> trackFuture = CompletableFuture.runAsync(() -> {
+
+            StartableRunnable trackRunnable = StartableRunnable.of(() -> {
                 try {
                     futureTracker.track(extraFuture);
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 }
             });
+            CompletableFuture<Integer> trackFuture = getFutureWithDelay(trackRunnable);
+            trackRunnable.awaitReadiness();
+            trackRunnable.start();
 
             assertThrows(TimeoutException.class, () -> trackFuture.get(DELAY_MILLIS, TimeUnit.MILLISECONDS));
             assertThat(trackFuture.isDone()).isFalse();
