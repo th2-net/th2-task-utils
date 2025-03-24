@@ -21,12 +21,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -36,12 +40,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @Timeout(value = 1, unit = SECONDS)
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class FutureTrackerTest {
     private final int LIMIT = 3;
     private final long NO_DELAY_MILLIS = 75;
     private final long DELAY_MILLIS = 100;
     private final Duration DELAY_DURATION = Duration.ofMillis(DELAY_MILLIS);
 
+    /**
+     * Size of executor equals {@link #LIMIT} + extra future + blocking call
+     */
+    private final ExecutorService executor = Executors.newFixedThreadPool(LIMIT + 2);
     private final List<StartableRunnable> runnableList = new ArrayList<>();
     private final List<CompletableFuture<?>> futuresList = new ArrayList<>();
 
@@ -70,7 +79,7 @@ public class FutureTrackerTest {
     private CompletableFuture<Integer> getFutureWithException() {
         CompletableFuture<Integer> future = CompletableFuture.supplyAsync(() -> {
             throw new RuntimeException();
-        });
+        }, executor);
         futuresList.add(future);
         return future;
     }
@@ -80,7 +89,7 @@ public class FutureTrackerTest {
         CompletableFuture<Integer> future = CompletableFuture.supplyAsync(() -> {
             waitingRunnable.run();
             return 0;
-        });
+        }, executor);
         futuresList.add(future);
         return future;
     }
@@ -113,6 +122,14 @@ public class FutureTrackerTest {
         task.invoke();
         long actualTrackingMillis = (System.nanoTime() - start) / 1_000_000;
         assertThat(actualTrackingMillis).isGreaterThanOrEqualTo(timeoutMillis);
+    }
+
+    @AfterAll
+    public void afterAll() throws InterruptedException {
+        executor.shutdown();
+        if (!executor.awaitTermination(5, SECONDS)) {
+            executor.shutdownNow();
+        }
     }
 
     @AfterEach
@@ -256,7 +273,6 @@ public class FutureTrackerTest {
     }
 
     @Nested
-    @Timeout(value = 5, unit = SECONDS)
     class Limited {
         private final FutureTracker<Integer> futureTracker = FutureTracker.create(LIMIT);
 
