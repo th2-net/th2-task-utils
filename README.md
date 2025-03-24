@@ -19,9 +19,13 @@ Task extraction does not free up resources in queue. They are reserved for futur
 ### 0.1.4
 
 * The release includes BROKEN changes related to `FutureTracker` class:
-  * Public constructors have been replaced to `create` factory methods.
-  * The `boolean track(CompletableFuture<T> future)` method can return `false` and doesn't track feature when limit is positive. 
+  * The `boolean track(CompletableFuture<T> future)` method can throw InterruptedException.
+  * The `void awaitRemaining()` and `awaitRemaining(long timeoutMillis)` methods can throw InterruptedException.
 
 * Provided ability to limit capacity of `FutureTracker` class
-* Added `FutureTracker.create()` and `FutureTracker.create(int limit)` factory methods
-* Added `boolean track(CompletableFuture<T> future, long timeoutMillis)  throws InterruptedException` overload method in `FutureTracker` class.
+* Added `FutureTracker.createUnlimited()` and `FutureTracker.create(int limit)` factory methods
+* Added `boolean track(CompletableFuture<T> future, Duration timeout)` overload method in `FutureTracker` class.
+* Added `void awaitRemaining(Duration timeout)` overload method in `FutureTracker` class.
+* Added `int limit()` method into `FutureTracker` class.
+* Added `boolean hasLimit()` method into `FutureTracker` class.
+* Added `boolean isEnabled()` method into `FutureTracker` class.

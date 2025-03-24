@@ -17,6 +17,10 @@ repositories {
 }
 
 dependencies {
+    implementation("org.slf4j:slf4j-api")
+
+    testImplementation 'org.apache.logging.log4j:log4j-slf4j2-impl'
+    testImplementation 'org.apache.logging.log4j:log4j-core'
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.assertj.core)
     testImplementation 'org.junit.jupiter:junit-jupiter-api'
