@@ -96,7 +96,7 @@ public class FutureTracker<T> {
      */
     public boolean track(CompletableFuture<T> future) throws InterruptedException {
         while (!track(future, DURATION_MINUTE)) {
-            LOGGER.warn("Future can't be tracked longer than {}", DURATION_MINUTE);
+            LOGGER.warn("Future can't be added to track list for longer than {}", DURATION_MINUTE);
             if (Thread.currentThread().isInterrupted()) { // Clears interrupted status!
                 throw new InterruptedException();
             }
