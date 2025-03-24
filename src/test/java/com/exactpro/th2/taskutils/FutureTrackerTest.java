@@ -116,7 +116,6 @@ public class FutureTrackerTest {
     }
 
     @AfterEach
-    @Timeout(value = 5, unit = SECONDS)
     public void afterEach() throws InterruptedException {
         for (StartableRunnable startableRunnable : runnableList) {
             if (!startableRunnable.isReady()) {
@@ -257,6 +256,7 @@ public class FutureTrackerTest {
     }
 
     @Nested
+    @Timeout(value = 5, unit = SECONDS)
     class Limited {
         private final FutureTracker<Integer> futureTracker = FutureTracker.create(LIMIT);
 
