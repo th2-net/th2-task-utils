@@ -211,13 +211,12 @@ public class FutureTracker<T> {
             } catch (ExecutionException | TimeoutException e) {
                 // do nothing
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                LOGGER.error("Await remaining operation is interrupted", e);
+                throw e;
             } catch (Exception e) {
+                LOGGER.error("Await remaining operation is failed", e);
                 throw new RuntimeException(e);
             }
-        }
-        if (Thread.currentThread().isInterrupted()) {
-            throw new InterruptedException();
         }
     }
 
@@ -273,7 +272,7 @@ public class FutureTracker<T> {
 
     private void addFuture(CompletableFuture<T> future) {
         if (!enabled) {
-            throw new IllegalStateException("future tracker is disabled");
+            throw new IllegalStateException("Future tracker is disabled");
         }
         futures.add(future);
         future.whenComplete((res, ex) -> {

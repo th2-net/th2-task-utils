@@ -156,7 +156,7 @@ public class FutureTrackerTest {
     }
 
     @Nested
-    class Both {
+    class UnlimitedlyLimited {
         @ParameterizedTest
         @ValueSource(ints = {0, LIMIT})
         public void testEmptyTracker(int limit) throws InterruptedException {
@@ -428,7 +428,7 @@ public class FutureTrackerTest {
             assertLessDuration(NO_DELAY_MILLIS, () -> {
                 ExecutionException exception = assertThrows(ExecutionException.class, trackFuture::get);
                 assertThat(exception.getMessage())
-                        .isEqualTo("java.lang.IllegalStateException: Future tracker is disabled before tracking start");
+                        .isEqualTo("java.lang.IllegalStateException: Future tracker is disabled");
                 assertThat(trackFuture.isDone()).isTrue();
             });
             assertThat(futureTracker.remaining()).isEqualTo(0);
