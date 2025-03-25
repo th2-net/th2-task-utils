@@ -273,7 +273,7 @@ public class FutureTracker<T> {
 
     private void addFuture(CompletableFuture<T> future) {
         if (!enabled) {
-            throw new IllegalStateException("Future tracker is disabled before tracking start");
+            throw new IllegalStateException("future tracker is disabled");
         }
         futures.add(future);
         future.whenComplete((res, ex) -> {
