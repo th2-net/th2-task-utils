@@ -1,5 +1,5 @@
 [versions]
-th2-plugin = "0.3.4"
+th2-plugin = "0.3.5"
 
 [libraries]
 assertj-core = { group = "org.assertj", name = "assertj-core", version = "3.27.4" }
