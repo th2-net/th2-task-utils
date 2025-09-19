@@ -2,7 +2,7 @@
 th2-plugin = "0.3.7"
 
 [libraries]
-assertj-core = { group = "org.assertj", name = "assertj-core", version = "3.27.4" }
+assertj-core = { group = "org.assertj", name = "assertj-core", version = "3.27.5" }
 junit-bom = { group = "org.junit", name = "junit-bom", version = "5.13.4" }
 
 [plugins]
