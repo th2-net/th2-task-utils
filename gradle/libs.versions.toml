@@ -3,7 +3,7 @@ th2-plugin = "0.3.10"
 
 [libraries]
 assertj-core = { group = "org.assertj", name = "assertj-core", version = "3.27.6" }
-junit-bom = { group = "org.junit", name = "junit-bom", version = "5.13.4" }
+junit-bom = { group = "org.junit", name = "junit-bom", version = "6.0.0" }
 
 [plugins]
 th2-publish = { id = "com.exactpro.th2.gradle.publish", version.ref = "th2-plugin" }
