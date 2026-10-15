@@ -8,11 +8,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.actor != 'dependabot[bot]'
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         ref: ${{ github.sha }}
     - name: Checkout tool
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         repository: exactpro-th2/ci-github-action
         ref: master
