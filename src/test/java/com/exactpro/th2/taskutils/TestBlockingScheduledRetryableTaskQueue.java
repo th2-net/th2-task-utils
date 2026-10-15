@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 Exactpro (Exactpro Systems Limited)
+ * Copyright 2020-2026 Exactpro (Exactpro Systems Limited)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,23 @@ package com.exactpro.th2.taskutils;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 public class TestBlockingScheduledRetryableTaskQueue {
 
     public static final long START_TIME = 1278417364718L;
 
     @Test
-    public void testBasicLogic() {
+    public void testBasicLogic() throws InterruptedException {
 
         final int  maxTaskCount = 35;
         final long maxDataSize = 23748987;
@@ -69,7 +78,7 @@ public class TestBlockingScheduledRetryableTaskQueue {
     }
 
     @Test
-    public void testJobExtractionOrder() {
+    public void testJobExtractionOrder() throws InterruptedException {
 
         ScheduledRetryableTask<Object> task1 = new ScheduledRetryableTask<>(START_TIME, 1, 100, null);
         ScheduledRetryableTask<Object> task2 = new ScheduledRetryableTask<>(START_TIME + 1234, 2, 100, null);
@@ -91,7 +100,7 @@ public class TestBlockingScheduledRetryableTaskQueue {
         final int taskCount = 10;
         StartableRunnable fastProducer = StartableRunnable.of(() -> {
             for (int i = 0; i < taskCount; i++) {
-                queue.submit(new ScheduledRetryableTask<>(System.nanoTime(), 0, i * 10, null));
+                submitUnchecked(queue, new ScheduledRetryableTask<>(System.nanoTime(), 0, i * 10, null));
                 pause(1);
             }
         });
@@ -103,7 +112,7 @@ public class TestBlockingScheduledRetryableTaskQueue {
                     assertEquals(i * 10, task.getPayloadSize(), "Incorrect task");
                     pause(20);
                     queue.complete(task);
-                } catch (InterruptedException e) {
+                } catch (InterruptedException ignored) {
                 }
             }
         });
@@ -136,7 +145,7 @@ public class TestBlockingScheduledRetryableTaskQueue {
         final int taskCount = 10;
         StartableRunnable fastProducer = StartableRunnable.of(() -> {
             for (int i = 0; i < taskCount; i++) {
-                queue.submit(new ScheduledRetryableTask<>(System.nanoTime(), i, 80, null));
+                submitUnchecked(queue, new ScheduledRetryableTask<>(System.nanoTime(), i, 80, null));
                 pause(1);
             }
         });
@@ -148,7 +157,7 @@ public class TestBlockingScheduledRetryableTaskQueue {
                     assertEquals(i, task.getRetriesLeft(), "Incorrect task");
                     pause(20);
                     queue.complete(task);
-                } catch (InterruptedException e) {
+                } catch (InterruptedException ignored) {
                 }
             }
         });
@@ -173,10 +182,150 @@ public class TestBlockingScheduledRetryableTaskQueue {
         assertEquals(0, queue.getUsedDataSize(), "Data size after execution");
     }
 
+    @Test
+    public void testOversizedTaskIsAcceptedByEmptyQueue() {
+        BlockingScheduledRetryableTaskQueue<Object> queue = new BlockingScheduledRetryableTaskQueue<>(10, 100, null);
+        ScheduledRetryableTask<Object> task = new ScheduledRetryableTask<>(System.nanoTime(), 1, 101, new Object());
+
+        assertTimeoutPreemptively(TIMEOUT, () -> queue.submit(task), "Oversized task submission to empty queue");
+        assertEquals(1, queue.getTaskCount(), "Task count");
+        assertEquals(101, queue.getUsedDataSize(), "Used data size");
+
+        assertEquals(task, queue.take(), "Extracted task");
+        queue.complete(task);
+        assertEquals(0, queue.getTaskCount(), "Task count");
+        assertEquals(0, queue.getUsedDataSize(), "Used data size");
+    }
+
+    @Test
+    public void testOversizedTaskWaitsForEmptyQueue() throws Exception {
+        BlockingScheduledRetryableTaskQueue<Object> queue = new BlockingScheduledRetryableTaskQueue<>(10, 100, null);
+        ScheduledRetryableTask<Object> smallTask = new ScheduledRetryableTask<>(System.nanoTime(), 1, 10, null);
+        ScheduledRetryableTask<Object> oversizedTask = new ScheduledRetryableTask<>(System.nanoTime(), 1, 150, null);
+        queue.submit(smallTask);
+
+        CompletableFuture<Void> submission = submitAsync(queue, oversizedTask);
+        assertBlocked(submission, "Oversized task submission to non-empty queue");
+        assertEquals(1, queue.getTaskCount(), "Task count");
+
+        queue.complete(queue.take());
+        submission.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        assertEquals(1, queue.getTaskCount(), "Task count");
+        assertEquals(150, queue.getUsedDataSize(), "Used data size");
+    }
+
+    @Test
+    public void testOversizedTaskBlocksFollowingSubmissions() throws Exception {
+        BlockingScheduledRetryableTaskQueue<Object> queue = new BlockingScheduledRetryableTaskQueue<>(10, 100, null);
+        ScheduledRetryableTask<Object> oversizedTask = new ScheduledRetryableTask<>(System.nanoTime(), 1, 150, null);
+        ScheduledRetryableTask<Object> smallTask = new ScheduledRetryableTask<>(System.nanoTime(), 1, 10, null);
+        assertTimeoutPreemptively(TIMEOUT, () -> queue.submit(oversizedTask), "Oversized task submission to empty queue");
+
+        CompletableFuture<Void> submission = submitAsync(queue, smallTask);
+        assertBlocked(submission, "Task submission while oversized task occupies queue");
+
+        queue.complete(queue.take());
+        submission.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        assertEquals(1, queue.getTaskCount(), "Task count");
+        assertEquals(10, queue.getUsedDataSize(), "Used data size");
+    }
+
+    @Test
+    public void testSubmitAfterMaxDataSizeDecreasedBelowTaskSize() throws Exception {
+        BlockingScheduledRetryableTaskQueue<Object> queue = new BlockingScheduledRetryableTaskQueue<>(10, 100, null);
+        ScheduledRetryableTask<Object> firstTask = new ScheduledRetryableTask<>(System.nanoTime(), 1, 80, null);
+        ScheduledRetryableTask<Object> secondTask = new ScheduledRetryableTask<>(System.nanoTime(), 1, 80, null);
+        queue.submit(firstTask);
+
+        CompletableFuture<Void> submission = submitAsync(queue, secondTask);
+        assertBlocked(submission, "Task submission to full queue");
+
+        queue.setMaxDataSize(50);
+        queue.complete(queue.take());
+        submission.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        assertEquals(1, queue.getTaskCount(), "Task count");
+        assertEquals(80, queue.getUsedDataSize(), "Used data size");
+    }
+
+    @Test
+    public void testIncreasingMaxDataSizeUnblocksSubmit() throws Exception {
+        BlockingScheduledRetryableTaskQueue<Object> queue = new BlockingScheduledRetryableTaskQueue<>(10, 100, null);
+        queue.submit(new ScheduledRetryableTask<>(System.nanoTime(), 1, 80, null));
+
+        CompletableFuture<Void> submission = submitAsync(queue, new ScheduledRetryableTask<>(System.nanoTime(), 1, 80, null));
+        assertBlocked(submission, "Task submission to full queue");
+
+        queue.setMaxDataSize(200);
+        submission.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        assertEquals(2, queue.getTaskCount(), "Task count");
+        assertEquals(160, queue.getUsedDataSize(), "Used data size");
+    }
+
+    @Test
+    public void testBlockedSubmitCanBeInterrupted() throws Exception {
+        BlockingScheduledRetryableTaskQueue<Object> queue = new BlockingScheduledRetryableTaskQueue<>(1, 100, null);
+        queue.submit(new ScheduledRetryableTask<>(System.nanoTime(), 1, 10, null));
+
+        CompletableFuture<Throwable> result = new CompletableFuture<>();
+        Thread thread = new Thread(() -> {
+            try {
+                queue.submit(new ScheduledRetryableTask<>(System.nanoTime(), 1, 10, null));
+                result.complete(null);
+            } catch (Throwable e) {
+                result.complete(e);
+            }
+        });
+        thread.setDaemon(true);
+        thread.start();
+
+        assertBlocked(result, "Task submission to full queue");
+        thread.interrupt();
+        assertInstanceOf(InterruptedException.class, result.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS),
+                "Blocked submit must be interrupted");
+        assertEquals(1, queue.getTaskCount(), "Task count");
+        assertEquals(10, queue.getUsedDataSize(), "Used data size");
+    }
+
+    private static final Duration TIMEOUT = Duration.ofSeconds(5);
+    private static final long BLOCKING_CHECK_MILLIS = 200;
+
+    private static CompletableFuture<Void> submitAsync(BlockingScheduledRetryableTaskQueue<Object> queue,
+                                                       ScheduledRetryableTask<Object> task) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        Thread thread = new Thread(() -> {
+            try {
+                queue.submit(task);
+                future.complete(null);
+            } catch (Throwable e) {
+                future.completeExceptionally(e);
+            }
+        });
+        thread.setDaemon(true);
+        thread.start();
+        return future;
+    }
+
+    private static void assertBlocked(CompletableFuture<?> future, String message) {
+        assertThrows(TimeoutException.class,
+                () -> future.get(BLOCKING_CHECK_MILLIS, TimeUnit.MILLISECONDS),
+                message + " must block");
+        assertFalse(future.isDone(), message + " must block");
+    }
+
+    private static void submitUnchecked(BlockingScheduledRetryableTaskQueue<Object> queue,
+                                        ScheduledRetryableTask<Object> task) {
+        try {
+            queue.submit(task);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+    }
+
     private static void pause(long millis) {
         try {
             Thread.sleep(millis);
-        } catch (InterruptedException e) {
+        } catch (InterruptedException ignored) {
 
         }
     }
