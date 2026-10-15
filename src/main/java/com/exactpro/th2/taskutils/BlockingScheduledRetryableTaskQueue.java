@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2025 Exactpro (Exactpro Systems Limited)
+ * Copyright 2020-2026 Exactpro (Exactpro Systems Limited)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,9 @@
 
 package com.exactpro.th2.taskutils;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.HashSet;
 import java.util.PriorityQueue;
 import java.util.Queue;
@@ -25,6 +28,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class BlockingScheduledRetryableTaskQueue<V> {
+    private static final Logger LOGGER = LoggerFactory.getLogger(BlockingScheduledRetryableTaskQueue.class);
 
     /**
      * GuardedBy {@link #lock}
@@ -82,29 +86,46 @@ public class BlockingScheduledRetryableTaskQueue<V> {
     /**
      * Submits task to the queue.<BR>
      * Blocks until available capacity requirements are met, that is queue has space for this task by
-     * the count and cumulative data size of submitted task
+     * the count and cumulative data size of submitted task.
+     * <P>
+     * A task whose payload size exceeds the maximum data size (see {@link #getMaxDataSize()}) can never fit
+     * into the remaining capacity. Such task is accepted only when the queue holds no data (used data size is 0),
+     * so it occupies the whole data capacity until it is completed. Until then all other submissions are blocked.
+     * </P>
      *
      * @param task   Task to be added to the queue
+     * @throws InterruptedException if the current thread was interrupted while waiting for capacity.
+     *                              The task is not added to the queue in this case.
      */
-    public void submit(ScheduledRetryableTask<V> task) {
+    public void submit(ScheduledRetryableTask<V> task) throws InterruptedException {
         lock.lock();
         try {
             if (taskSet.contains(task))
                 throw new IllegalStateException("Task has been already submitted");
 
             while (true) {
-                long capacityLeft = maxDataSize - dataSize;
-                if (capacityLeft >= task.getPayloadSize() && taskSet.size() < maxTaskCount) {
+                if (taskSet.size() < maxTaskCount && fitsDataCapacity(task.getPayloadSize())) {
+                    if (task.getPayloadSize() > maxDataSize) {
+                        LOGGER.warn("Task payload size {} exceeds max data size {}, task is accepted because queue is empty",
+                                task.getPayloadSize(), maxDataSize);
+                    }
                     dataSize += task.getPayloadSize();
                     addTask(task);
                     break;
                 } else {
-                    removal.awaitUninterruptibly();
+                    removal.await();
                 }
             }
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * GuardedBy {@link #lock}
+     */
+    private boolean fitsDataCapacity(long payloadSize) {
+        return dataSize == 0 || maxDataSize - dataSize >= payloadSize;
     }
 
 
@@ -207,6 +228,7 @@ public class BlockingScheduledRetryableTaskQueue<V> {
                     ScheduledRetryableTask<V> job = taskQueue.peek();
                     long now = System.nanoTime();
                     if (now < job.getScheduledTime())
+                        //noinspection ResultOfMethodCallIgnored
                         addition.awaitNanos(job.getScheduledTime() - now);
                     else
                         return taskQueue.poll();
@@ -267,13 +289,16 @@ public class BlockingScheduledRetryableTaskQueue<V> {
     }
 
     /**
-     * Sets cumulative data size for all tasks that can be submitted before blocking
+     * Sets cumulative data size for all tasks that can be submitted before blocking.
+     * Blocked submit() calls re-check capacity against the new value.
+     * Tasks already in the queue are not affected even if their payload size exceeds the new value.
      * @param value  New data size to be set
      */
     public void setMaxDataSize(long value) {
         lock.lock();
         try {
             this.maxDataSize = value;
+            removal.signalAll();
         } finally {
             lock.unlock();
         }
